@@ -24,6 +24,7 @@ impl<'a> Notifier for DbusNotifier<'a> {
             Variant(Box::new(String::from("Remember B-Day"))),
         );
         map.insert(String::from("body"), Variant(Box::new(message)));
+        map.insert(String::from("priority"), Variant(Box::new(String::from("low"))));
         // TODO icon (cake)
         self.proxy.add_notification("my-id", map)?;
         Ok(())
