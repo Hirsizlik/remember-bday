@@ -2,8 +2,7 @@ pub mod notifications;
 pub mod vcard;
 
 use chrono::prelude::*;
-use std::error;
-use std::fmt;
+use notifications::{Notifier, NotifierError};
 use vcard::VCard;
 
 pub struct Config {
@@ -20,23 +19,6 @@ impl Config {
         };
 
         Ok(Config { file_path })
-    }
-}
-
-pub trait Notifier {
-    fn send_notification(&self, message: String) -> Result<(), NotifierError>;
-}
-
-#[derive(Debug)]
-pub struct NotifierError {
-    message: Box<str>,
-}
-
-impl error::Error for NotifierError {}
-
-impl fmt::Display for NotifierError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "Error while sending a notification: {}", self.message)
     }
 }
 

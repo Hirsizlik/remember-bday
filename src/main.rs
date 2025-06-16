@@ -1,4 +1,4 @@
-use remember_bday::Notifier;
+use remember_bday::notifications::Notifier;
 use remember_bday::{vcard, Config};
 use std::{env, fs, process};
 
