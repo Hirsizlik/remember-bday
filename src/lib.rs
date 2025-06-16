@@ -7,10 +7,14 @@ use vcard::VCard;
 
 pub struct Config {
     pub file_path: String,
+    pub windows_app_id: String,
 }
 
 impl Config {
-    pub fn build(mut args: impl Iterator<Item = String>) -> Result<Config, &'static str> {
+    pub fn build(
+        mut args: impl Iterator<Item = String>,
+        mut env_vars: impl for<'a> Iterator<Item = (String, String)>,
+    ) -> Result<Config, &'static str> {
         args.next();
 
         let file_path = match args.next() {
@@ -18,7 +22,17 @@ impl Config {
             _ => return Err("Didn't get path to a vcf file"),
         };
 
-        Ok(Config { file_path })
+        let windows_app_id = env_vars
+            .find_map(|v| match v.0.as_str() {
+                "REMEMBER_BDAY_APP_ID" => Some(v.1),
+                _ => None,
+            })
+            .unwrap_or("remember-bday".to_string());
+
+        Ok(Config {
+            file_path,
+            windows_app_id,
+        })
     }
 }
 
@@ -47,23 +61,50 @@ mod tests {
     use std::cell::RefCell;
 
     #[test]
-    fn build_config_success() {
+    fn build_config_success_noenv() {
         let test_args = vec!["ignored", "/a/path/to/a.vcf", "also ignored"];
-        let config = Config::build(test_args.iter().map(|s| String::from(*s)));
-        assert_eq!("/a/path/to/a.vcf", config.unwrap().file_path);
+        let test_env = vec![];
+        let config = Config::build(
+            test_args.iter().map(|s| String::from(*s)),
+            test_env.into_iter(),
+        )
+        .unwrap();
+        assert_eq!("/a/path/to/a.vcf", config.file_path);
+        assert_eq!("remember-bday", config.windows_app_id);
+    }
+
+    #[test]
+    fn build_config_success_with_appid() {
+        let test_args = vec!["ignored", "/a/path/to/a.vcf", "also ignored"];
+        let test_env = vec![("REMEMBER_BDAY_APP_ID".to_string(), "Test.Id".to_string())];
+        let config = Config::build(
+            test_args.iter().map(|s| String::from(*s)),
+            test_env.into_iter(),
+        )
+        .unwrap();
+        assert_eq!("/a/path/to/a.vcf", config.file_path);
+        assert_eq!("Test.Id", config.windows_app_id);
     }
 
     #[test]
     fn build_config_failure_noarg() {
         let test_args = vec!["ignored"];
-        let config = Config::build(test_args.iter().map(|s| String::from(*s)));
+        let test_env = vec![];
+        let config = Config::build(
+            test_args.iter().map(|s| String::from(*s)),
+            test_env.into_iter(),
+        );
         assert!(config.is_err());
     }
 
     #[test]
     fn build_config_failure_wrong_type() {
         let test_args = vec!["ignored", "/a/path/to/a.txt", "also ignored"];
-        let config = Config::build(test_args.iter().map(|s| String::from(*s)));
+        let test_env = vec![];
+        let config = Config::build(
+            test_args.iter().map(|s| String::from(*s)),
+            test_env.into_iter(),
+        );
         assert!(config.is_err());
     }
 
