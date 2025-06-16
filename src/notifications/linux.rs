@@ -9,13 +9,13 @@ pub struct DbusNotifier {
     conn: Connection,
 }
 
-impl<'a> DbusNotifier {
+impl DbusNotifier {
     pub fn new(conn: Connection) -> Self {
         DbusNotifier { conn }
     }
 }
 
-impl<'a> Notifier for DbusNotifier {
+impl Notifier for DbusNotifier {
     fn send_notification(&self, message: String) -> Result<(), NotifierError> {
         let proxy = self.conn.with_proxy(
             "org.freedesktop.portal.Desktop",
