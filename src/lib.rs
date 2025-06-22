@@ -37,11 +37,9 @@ impl Config {
 }
 
 pub fn send_bday_notifications(
-    notifier: &dyn Notifier,
+    notifier: &impl Notifier,
     vcards: Vec<VCard>,
 ) -> Result<(), NotifierError> {
-    // TODO Tests
-
     let today = chrono::Local::now().date_naive();
     for vcard in vcards {
         if let Some(bday) = vcard.bday {
@@ -112,7 +110,7 @@ mod tests {
         messages: RefCell<Vec<String>>,
     }
 
-    impl<'a> Notifier for MockNotifier {
+    impl Notifier for MockNotifier {
         fn send_notification(&self, message: String) -> Result<(), NotifierError> {
             self.messages.borrow_mut().push(message);
             Ok(())
