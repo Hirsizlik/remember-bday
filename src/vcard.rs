@@ -14,6 +14,7 @@ pub enum VCardError {
     NoNameError,
     InvalidNameError,
     InvalidBDayError(String),
+    InvalidMultilineQuotedPrintable,
 }
 
 impl fmt::Display for VCardError {
@@ -24,6 +25,7 @@ impl fmt::Display for VCardError {
             Self::NoNameError => write!(f, "No name at end of vcard"),
             Self::InvalidNameError => write!(f, "error while parsing name"),
             Self::InvalidBDayError(msg) => write!(f, "error while parsing bday: {}", msg),
+            Self::InvalidMultilineQuotedPrintable => write!(f, "error parsing multiline quoted printable")
         }
     }
 }
@@ -34,24 +36,7 @@ impl error::Error for VCardError {}
 enum ParseState {
     In,
     Out,
-}
-
-impl ParseState {
-    fn is_in(&self, msg: VCardError) -> Result<(), VCardError> {
-        return if *self != ParseState::In {
-            Err(msg)
-        } else {
-            Ok(())
-        };
-    }
-
-    fn is_out(&self, msg: VCardError) -> Result<(), VCardError> {
-        return if *self != ParseState::Out {
-            Err(msg)
-        } else {
-            Ok(())
-        };
-    }
+    MultilineQuotedPrintable,
 }
 
 pub fn parse_vcards(contents: String) -> Result<Vec<VCard>, VCardError> {
@@ -60,17 +45,22 @@ pub fn parse_vcards(contents: String) -> Result<Vec<VCard>, VCardError> {
 
     let mut name: Option<String> = None;
     let mut bday: Option<NaiveDate> = None;
+    let mut partial_name_line: Option<String> = None;
 
     for line in contents.lines() {
         match line {
             "BEGIN:VCARD" => {
-                parse_state.is_out(VCardError::UnexpectedFieldError(String::from(
-                    "BEGIN:VCARD",
-                )))?;
+                if parse_state != ParseState::Out {
+                    return Err(VCardError::UnexpectedFieldError(String::from(
+                        "BEGIN:VCARD",
+                    )));
+                }
                 parse_state = ParseState::In;
             }
             "END:VCARD" => {
-                parse_state.is_in(VCardError::UnexpectedFieldError(String::from("END:VCARD")))?;
+                if parse_state == ParseState::Out {
+                    return Err(VCardError::UnexpectedFieldError(String::from("END:VCARD")));
+                }
                 parse_state = ParseState::Out;
                 let vcard = match name {
                     Some(name) => VCard { name, bday },
@@ -81,27 +71,58 @@ pub fn parse_vcards(contents: String) -> Result<Vec<VCard>, VCardError> {
                 bday = None;
             }
             line => {
-                parse_state.is_in(VCardError::UnexpectedFieldError(String::from("contents")))?;
-                if line.starts_with("FN:") {
-                    name = Some(String::from(&line[3..]));
-                } else if line.starts_with("FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:") {
-                    let decoded_name = decode_quoted_printable(&line[43..])?;
-                    name = Some(decoded_name);
-                } else if line.starts_with("BDAY:") {
-                    let res = NaiveDate::parse_from_str(&line[5..], "%Y-%m-%d");
+                match parse_state {
+                    ParseState::In => {
+                        if line.starts_with("FN:") {
+                            name = Some(String::from(&line[3..]));
+                        } else if line.starts_with("FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:") {
+                            if line.ends_with('=') {
+                                let mut new_partial = line.to_string();
+                                new_partial.pop();
+                                partial_name_line = new_partial.into();
+                                parse_state = ParseState::MultilineQuotedPrintable;
+                            } else {
+                                let decoded_name = decode_quoted_printable(&line[43..])?;
+                                name = Some(decoded_name);
+                            }
+                        } else if line.starts_with("BDAY:") {
+                            let res = NaiveDate::parse_from_str(&line[5..], "%Y-%m-%d");
 
-                    bday = match res {
-                        Ok(nd) => Some(nd),
-                        Err(pe) => return Err(VCardError::InvalidBDayError(pe.to_string())),
-                    };
+                            bday = match res {
+                                Ok(nd) => Some(nd),
+                                Err(pe) => {
+                                    return Err(VCardError::InvalidBDayError(pe.to_string()))
+                                }
+                            };
+                        }
+                    }
+                    ParseState::Out => {
+                        return Err(VCardError::UnexpectedFieldError(String::from("contents")))
+                    }
+                    ParseState::MultilineQuotedPrintable => {
+                        if !line.starts_with('=') {
+                            return Err(VCardError::InvalidMultilineQuotedPrintable);
+                        }
+
+                        let mut new_partial = partial_name_line.clone().unwrap();
+                        new_partial.push_str(line);
+                        if line.ends_with('=') {
+                            new_partial.pop();
+                            partial_name_line = new_partial.into();
+                        } else {
+                            let decoded_name = decode_quoted_printable(&new_partial[43..])?;
+                            name = Some(decoded_name);
+                            parse_state = ParseState::In;
+                        }
+                    },
                 }
             }
         }
     }
 
     match parse_state {
-        ParseState::In => Err(VCardError::MissingEndError),
         ParseState::Out => Ok(result),
+        _ => Err(VCardError::MissingEndError),
     }
 }
 
@@ -145,7 +166,16 @@ VERSION:2.1
 N:Täst;;;;
 FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=54=C3=A4=73=74
 TEL;CELL:+01234567890
-END:VCARD";
+END:VCARD
+BEGIN:VCARD
+VERSION:2.1
+N:Täst;Multiline;;;
+FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=4D=75=6C=74=69=
+=6C=69=6E=65=20=
+=54=C3=A4=73=74
+TEL;CELL:+436603678145
+END:VCARD
+";
 
         let result = parse_vcards(input.to_string()).unwrap();
         let expected = vec![
@@ -159,6 +189,10 @@ END:VCARD";
             },
             VCard {
                 name: String::from("Täst"),
+                bday: None,
+            },
+            VCard {
+                name: String::from("Multiline Täst"),
                 bday: None,
             },
         ];
@@ -280,6 +314,41 @@ END:VCARD";
 
         assert_eq!(
             VCardError::InvalidBDayError(String::from("input contains invalid characters")),
+            result
+        );
+    }
+
+    #[test]
+    fn parse_vcards_multiline_unexpected_content() {
+        let input = "\
+BEGIN:VCARD
+VERSION:2.1
+N:Täst;Multiline;;;
+FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=4D=75=6C=74=69=
+OTHER_FIELD:WRONG
+END:VCARD";
+
+        let result = parse_vcards(input.to_string()).unwrap_err();
+
+        assert_eq!(
+            VCardError::InvalidMultilineQuotedPrintable,
+            result
+        );
+    }
+
+    #[test]
+    fn parse_vcards_multiline_unexpected_end() {
+        let input = "\
+BEGIN:VCARD
+VERSION:2.1
+N:Täst;Multiline;;;
+FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=4D=75=6C=74=69=
+END:VCARD";
+
+        let result = parse_vcards(input.to_string()).unwrap_err();
+
+        assert_eq!(
+            VCardError::NoNameError,
             result
         );
     }
